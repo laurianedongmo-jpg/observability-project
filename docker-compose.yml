@@ -1,0 +1,51 @@
+services:
+  # Always started: writes a fake application log into the shared "logs" volume.
+  loggen:
+    image: alpine:3.20
+    command: ["sh", "/loggen.sh"]
+    volumes:
+      - logs:/logs
+      - ./loggen.sh:/loggen.sh:ro
+
+  # Part 1: Fluent Bit alone (tail -> parse -> filter -> stdout)
+  fluentbit:
+    image: fluent/fluent-bit:latest
+    profiles: ["fb"]
+    depends_on: [loggen]
+    volumes:
+      - logs:/logs:ro
+      - ./fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ./fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
+
+  # Part 2: OpenTelemetry Collector alone (filelog + otlp -> processors -> debug)
+  otel:
+    image: otel/opentelemetry-collector-contrib:latest
+    profiles: ["otel"]
+    depends_on: [loggen]
+    command: ["--config=/etc/otelcol/config.yaml"]
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    volumes:
+      - logs:/logs:ro
+      - ./otel/collector.yaml:/etc/otelcol/config.yaml:ro
+
+  # Part 3: Fluent Bit at the edge -> Collector gateway, joined by OTLP
+  otel-gateway:
+    image: otel/opentelemetry-collector-contrib:latest
+    profiles: ["hybrid"]
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel/gateway.yaml:/etc/otelcol/config.yaml:ro
+
+  fb-edge:
+    image: fluent/fluent-bit:latest
+    profiles: ["hybrid"]
+    depends_on: [loggen, otel-gateway]
+    volumes:
+      - logs:/logs:ro
+      - ./fluent-bit/edge.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ./fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
+
+volumes:
+  logs:

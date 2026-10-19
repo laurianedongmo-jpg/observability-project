@@ -1,0 +1,53 @@
+receivers:
+  # Read the same application log file
+  filelog:
+    include: [/logs/app.log]
+    start_at: beginning
+    operators:
+      - type: json_parser
+        timestamp:
+          parse_from: attributes.time
+          layout: '%Y-%m-%dT%H:%M:%SZ'
+        severity:
+          parse_from: attributes.level
+  # Accept logs pushed by applications or other agents (OTLP)
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 200
+  # Drop DEBUG records
+  filter/drop_debug:
+    error_mode: ignore
+    logs:
+      log_record:
+        - 'severity_text == "DEBUG"'
+  # Add fields to every record
+  resource:
+    attributes:
+      - key: env
+        value: demo
+        action: upsert
+      - key: collected_by
+        value: otel-collector
+        action: upsert
+  batch:
+    timeout: 1s
+
+exporters:
+  # Print everything to the screen (docker compose logs)
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    logs:
+      receivers: [filelog, otlp]
+      processors: [memory_limiter, filter/drop_debug, resource, batch]
+      exporters: [debug]
